@@ -1,0 +1,6 @@
+{
+  "username": "cassandra",
+  "password": "cassandra",
+  "contact_points": ["192.168.99.100"],
+  "start_date": "2017-01-01T00:00:00Z"
+}
