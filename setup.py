@@ -11,7 +11,8 @@ setup(
     py_modules=["target_cassandra"],
     install_requires=[
         "singer-python>=5.0.12",
-        "cassandra-driver>=3.21.0"
+        "cassandra-driver>=3.21.0",
+        "python-dateutil>=1.4"
     ],
     entry_points="""
     [console_scripts]

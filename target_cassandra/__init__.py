@@ -10,11 +10,12 @@ import http.client
 import urllib
 from datetime import datetime
 import collections
-from typing import Sequence
+from typing import Sequence, Union
 
 import pkg_resources
 from jsonschema.validators import Draft4Validator
 import singer
+import dateutil.parser
 
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.cqlengine import columns
@@ -33,46 +34,50 @@ JSONSCHEMA_TO_CASSANDRA = {
     'integer': columns.Integer,
     'number': columns.Float,
     'null': None,
+    'object': None,
 }
 
+# "typecast" values from JSON records to values suitable for a mapped model
+# by default, use the identity function
+JSONVALUE_TO_CASSANDRA = collections.defaultdict(lambda: (lambda v: v))
+JSONVALUE_TO_CASSANDRA[columns.DateTime] = lambda v: None if v is None else dateutil.parser.parse(
+    v)
 
-def create_model_from_schema(schema: object) -> Model:
-    """ Create an class derived from cassandra.cqlengine.models.Models, based on the provided schema """
-    pass
+
+def jsonschema_to_cassandra(jsonschema_definition: dict) -> columns.Column:
+    # if type 'anyOf', we need to choose one
+    # TODO how to make this generic enough?
+    # For now, we take the first def
+    if 'anyOf' in jsonschema_definition:
+        return jsonschema_to_cassandra(jsonschema_definition['anyOf'][0])
+
+    jsonschema_type = jsonschema_definition['type']
+    jsonschema_additional_props = {
+        k: v for k, v in jsonschema_definition.items() if k != 'type'}
+
+    if type(jsonschema_type) == str:
+        assert jsonschema_type in JSONSCHEMA_TO_CASSANDRA
+        format_def = jsonschema_additional_props.get('format')
+        if jsonschema_type == 'string' and format_def == 'date-time':
+            return columns.DateTime
+        else:
+            return JSONSCHEMA_TO_CASSANDRA[jsonschema_type]
+    elif type(jsonschema_type) == list:
+        # remove 'null' from type definition. All columns are nullable by default in Cassandra
+        property_type = [pt for pt in jsonschema_type if pt != 'null']
+        assert(len(property_type) == 1)
+        return jsonschema_to_cassandra({'type': property_type[0], **jsonschema_additional_props})
 
 
 def process_schema(table_name: str, schema: dict, key_properties: Sequence[str]) -> Model:
     model_attrs = {}
     for property_key, property_definition in schema['properties'].items():
         property_type = property_definition.get('type')
-
-        if type(property_type) == list:
-           # remove 'null' from type definition. All columns are nullable by default in Cassandra
-            property_type = [pt for pt in property_type if pt != 'null']
-            assert len(property_type) == 1
-
-            model_column_class = JSONSCHEMA_TO_CASSANDRA.get(property_type[0])
-
-            # TODO handle `object` class
-            if model_column_class is None:
-                continue
-
-            assert model_column_class is not None
-
-            model_attrs[property_key] = model_column_class(
-                primary_key=property_key in key_properties)
-
-        elif type(property_type) == str:
-            model_column_class = JSONSCHEMA_TO_CASSANDRA.get(property_type)
-            assert model_column_class is not None
-
-            model_attrs[property_key] = model_column_class(
-                primary_key=property_key in key_properties)
-
-        elif property_type is None and 'anyOf' in property_definition:
-            property_type = property_definition['anyOf']
-
-            pass
+        model_column_class = jsonschema_to_cassandra(property_definition)
+        if model_column_class is None:
+            continue
+        model_attrs[property_key] = model_column_class(
+            primary_key=property_key in key_properties)
 
     # yay metaprogramming
     return type("%sModel" % table_name, (Model,), model_attrs)
@@ -140,8 +145,14 @@ def persist_lines(config, lines):
 
             # Process Record message here..
             mapped_model = mapped_models[o['stream']]
-            mapped_model.create(**{k: o['record'][k]
-                                   for k in defined_column_names[o['stream']]})
+            # build record dict
+            record = {}
+            for column_name in defined_column_names[o['stream']]:
+                typecaster = JSONVALUE_TO_CASSANDRA[type(
+                    mapped_model._get_column(column_name))]
+                record[column_name] = typecaster(o['record'][column_name])
+
+            mapped_model.create(**record)
 
             state = None
         elif t == 'STATE':
@@ -187,7 +198,7 @@ def main():
     else:
         config = {}
 
-    connection.setup(config['contact_points'], 'mykeyspace', protocol_version=3, auth_provider=PlainTextAuthProvider(
+    connection.setup(config['contact_points'], config['keyspace'], protocol_version=3, auth_provider=PlainTextAuthProvider(
         username=config['username'], password=config['password']))
 
     input = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
