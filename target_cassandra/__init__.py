@@ -12,7 +12,6 @@ from datetime import datetime
 import collections
 from typing import Sequence, Union
 
-import pkg_resources
 from jsonschema.validators import Draft4Validator
 import singer
 import dateutil.parser

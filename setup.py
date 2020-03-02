@@ -4,9 +4,9 @@ from setuptools import setup
 setup(
     name="target-cassandra",
     version="0.1.0",
-    description="Singer.io target for extracting data",
-    author="Stitch",
-    url="http://singer.io",
+    description="Singer.io target for Cassandra databases",
+    author="Coefficient.io",
+    url="https://coefficient.io",
     classifiers=["Programming Language :: Python :: 3 :: Only"],
     py_modules=["target_cassandra"],
     install_requires=[
@@ -21,4 +21,5 @@ setup(
     packages=["target_cassandra"],
     package_data={},
     include_package_data=True,
+    zip_safe=False,
 )
