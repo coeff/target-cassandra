@@ -151,7 +151,8 @@ def persist_lines(config, lines):
                     mapped_model._get_column(column_name))]
                 record[column_name] = typecaster(o['record'][column_name])
 
-            mapped_model.create(**record)
+            model_instance = mapped_model(**record)
+            model_instance.save()
 
             state = None
         elif t == 'STATE':
